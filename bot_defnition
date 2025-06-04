@@ -1,0 +1,250 @@
+import requests
+
+BASE_URL = "http://127.0.0.1:8000"  # Ensure this matches your FastAPI server's URL
+
+def add_doctor():
+    details = input("Enter doctor details (name,specialization): ")
+    try:
+        name, specialization = details.split(",")
+        response = requests.post(f"{BASE_URL}/doctors/", json={"name": name.strip(), "specialization": specialization.strip()})
+        if response.status_code == 200:
+            print(f"Doctor added with ID {response.json()['id']}")
+        else:
+            print("Error adding doctor:", response.json())
+    except ValueError:
+        print("Invalid input format. Please use the format: name,specialization")
+
+def add_patient():
+    details = input("Enter patient details (name,age,diagnosis,YYYY-MM-DD,doctor_id): ")
+    try:
+        name, age, diagnosis, admission_date, doctor_id = details.split(",")
+        response = requests.post(f"{BASE_URL}/patients/", json={
+            "name": name.strip(),
+            "age": int(age.strip()),
+            "diagnosis": diagnosis.strip(),
+            "admission_date": admission_date.strip(),
+            "doctor_id": int(doctor_id.strip())
+        })
+        if response.status_code == 200:
+            print(f"Patient added with ID {response.json()['id']}")
+        else:
+            print("Error adding patient:", response.json())
+    except ValueError:
+        print("Invalid input format. Please use the format: name,age,diagnosis,YYYY-MM-DD,doctor_id")
+
+def view_doctors():
+    response = requests.get(f"{BASE_URL}/doctorsdetail/")
+    if response.status_code == 200:
+        doctors = response.json()
+        for doctor in doctors:
+            print(f"ID: {doctor['id']}, Name: {doctor['name']}, Specialization: {doctor['specialization']}")
+    else:
+        print("Error fetching doctors:", response.json())
+
+def view_patients():
+    response = requests.get(f"{BASE_URL}/patients/")
+    if response.status_code == 200:
+        patients = response.json()
+        for patient in patients:
+            print(f"ID: {patient['id']}, Name: {patient['name']}, Age: {patient['age']}, Diagnosis: {patient['diagnosis']}, Admission Date: {patient['admission_date']}, Doctor ID: {patient['doctor']['id']}, Doctor Name: {patient['doctor']['name']}")
+    else:
+        print("Error fetching patients:", response.json())
+
+def update_patient():
+    details = input("Enter patient update details (patient_id,name,age,diagnosis,YYYY-MM-DD,doctor_id): ")
+    try:
+        patient_id, name, age, diagnosis, admission_date, doctor_id = details.split(",")
+        response = requests.put(
+            f"{BASE_URL}/patients/{patient_id.strip()}",
+            json={
+                "name": name.strip() ,
+                "age": int(age.strip()) ,
+                "diagnosis": diagnosis.strip() ,
+                "admission_date": admission_date.strip(),
+                "doctor_id": int(doctor_id.strip()) ,
+            },
+        )
+        if response.status_code == 200:
+            print(f"Patient updated successfully: {response.json()}")
+        else:
+            print("Error updating patient:", response.json())
+    except ValueError:
+        print("Invalid input format. Please use the format: patient_id,name,age,diagnosis,YYYY-MM-DD,doctor_id")
+
+
+def main():
+    while True:
+        print("\nHospital Management System")
+        print("1. Add Doctor")
+        print("2. Add Patient")
+        print("3. View Doctors")
+        print("4. View Patients")
+        print("5. Update Patient")
+        print("6. Exit")
+        
+        choice = input("Enter your choice: ")
+         
+        if choice == "1":
+            add_doctor()
+        elif choice == "2":
+            add_patient()
+        elif choice == "3":
+            view_doctors()
+        elif choice == "4":
+            view_patients()
+        elif choice == "5":
+            update_patient()
+        elif choice == "6":
+            print("Exiting the system.")
+            break
+        else:
+            print("Invalid choice. Please select a valid option.")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+from fastapi import FastAPI, Depends, HTTPException, Path
+from pydantic import BaseModel
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship, Session
+ 
+# Database setup
+DATABASE_URL = "sqlite:///./hospital.db"
+ 
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+ 
+# SQLAlchemy Models
+class Doctor(Base):
+    __tablename__ = "doctors"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    specialization = Column(String)
+    patients = relationship("Patient", back_populates="doctor")
+ 
+class Patient(Base):
+    __tablename__ = "patients"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    age = Column(Integer)
+    diagnosis = Column(String)
+    admission_date = Column(String)
+    doctor_id = Column(Integer, ForeignKey("doctors.id"))
+    doctor = relationship("Doctor", back_populates="patients")
+ 
+# Create tables
+Base.metadata.create_all(bind=engine)
+
+# FastAPI app
+app = FastAPI()
+ 
+# Pydantic Models
+class DoctorCreate(BaseModel):
+    name: str
+    specialization: str
+ 
+class DoctorResponse(BaseModel):
+    id: int
+    name: str
+    specialization: str
+ 
+    class Config:
+        orm_mode = True
+ 
+class PatientCreate(BaseModel):
+    name: str
+    age: int
+    diagnosis: str
+    admission_date: str
+    doctor_id: int
+ 
+class PatientResponse(BaseModel):
+    id: int
+    name: str
+    age: int
+    diagnosis: str
+    admission_date: str
+    doctor: DoctorResponse
+ 
+    class Config:
+        orm_mode = True
+
+class PatientUpdate(BaseModel):
+    name: str 
+    age: int 
+    diagnosis: str 
+    admission_date: str 
+    doctor_id: int
+ 
+# Dependency for DB
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+ 
+# API Endpoints
+ 
+# Create a doctor
+@app.post("/doctors/", response_model=DoctorResponse)
+def create_doctor(doctor: DoctorCreate, db: Session = Depends(get_db)):
+    db_doctor = Doctor(name=doctor.name, specialization=doctor.specialization)
+    db.add(db_doctor)
+    db.commit()
+    db.refresh(db_doctor)
+    return db_doctor
+ 
+# Get all doctors
+@app.get("/doctorsdetail/", response_model=list[DoctorResponse])
+def read_doctors(db: Session = Depends(get_db)):
+    return db.query(Doctor).all()
+ 
+# Create a patient
+@app.post("/patients/", response_model=PatientResponse)
+def create_patient(patient: PatientCreate, db: Session = Depends(get_db)):
+    doctor = db.query(Doctor).filter(Doctor.id == patient.doctor_id).first()
+    if doctor is None:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+ 
+    db_patient = Patient(
+        name=patient.name,
+        age=patient.age,
+        diagnosis=patient.diagnosis,
+        admission_date=patient.admission_date,
+        doctor_id=patient.doctor_id,
+    )
+    db.add(db_patient)
+    db.commit()
+    db.refresh(db_patient)
+    return db_patient
+ 
+# Get all patients
+@app.get("/patients/", response_model=list[PatientResponse])
+def read_patients(db: Session = Depends(get_db)):
+    return db.query(Patient).all()
+
+@app.put("/patients/{patient_id}", response_model=PatientResponse)
+def update_patient(patient_id: int, updated_data: PatientUpdate, db: Session = Depends(get_db)):
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    try:
+        for key, value in updated_data.dict(exclude_unset=True).items():
+            if key == "doctor_id" and value:
+                if not db.query(Doctor).filter(Doctor.id == value).first():
+                    raise HTTPException(status_code=404, detail="Doctor not found")
+            setattr(patient, key, value)
+        db.commit()
+        db.refresh(patient)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Error updating patient")
+    return patient
+
+
